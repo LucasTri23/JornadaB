@@ -1,0 +1,538 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Auth (NextAuth) ─────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  profile       Profile?
+  userPlans     UserReadingPlan[]
+  progress      UserProgress[]
+  notes         UserNote[]
+  favorites     UserFavoriteVerse[]
+  achievements  UserAchievement[]
+  notifications NotificationConfig?
+  groupMembers  GroupMember[]
+  resetTokens   PasswordResetToken[]
+
+  ministryProfile      MinistryProfile?
+  ministryEntries      MinistryEntry[]
+  monthSettings        MinistryMonthSetting[]
+  returnVisits         ReturnVisit[]
+  bibleStudies         BibleStudy[]
+  studySessions        StudySession[]
+  monthlyReports       MonthlyReport[]
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expires   DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Profile {
+  id                  String            @id @default(cuid())
+  userId              String            @unique
+  bio                 String?
+  spiritualGoal       String?
+  readingPreference   ReadingPreference @default(BIBLICAL_ORDER)
+  dailyTimeMinutes    Int               @default(15)
+  targetDays          Int               @default(365)
+  startDate           DateTime          @default(now())
+  hasCompletedBefore  Boolean           @default(false)
+  onboardingCompleted Boolean           @default(false)
+  themePreference     Theme             @default(LIGHT)
+  fontSize            Int               @default(16)
+  notifyTime          String?
+  notifyDays          Json              @default("[1,2,3,4,5,6,0]")
+  streak              Int               @default(0)
+  bestStreak          Int               @default(0)
+  lastReadAt          DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum ReadingPreference {
+  BIBLICAL_ORDER
+  CHRONOLOGICAL
+  BY_STORY
+  BY_THEME
+  CUSTOM
+}
+
+enum Theme {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+// ─── Bible Content ───────────────────────────────────────────────────────────
+
+model BibleBook {
+  id            String            @id @default(cuid())
+  name          String
+  abbreviation  String
+  testament     Testament
+  position      Int               @unique
+  totalChapters Int
+  chapters      BibleChapter[]
+  planItems     ReadingPlanItem[]
+}
+
+enum Testament {
+  OLD
+  NEW
+}
+
+model BibleChapter {
+  id          String            @id @default(cuid())
+  bookId      String
+  number      Int
+  totalVerses Int
+  summary     String?           @db.Text
+  context     String?           @db.Text
+  mainTheme   String?
+  characters  String?
+  location    String?
+  book        BibleBook         @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  verses      BibleVerse[]
+  planItems   ReadingPlanItem[]
+  progress    UserProgress[]
+  notes       UserNote[]
+
+  @@unique([bookId, number])
+}
+
+model BibleVerse {
+  id        String              @id @default(cuid())
+  chapterId String
+  number    Int
+  text      String              @db.Text
+  chapter   BibleChapter        @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  favorites UserFavoriteVerse[]
+
+  @@unique([chapterId, number])
+}
+
+// ─── Reading Plans ────────────────────────────────────────────────────────────
+
+model ReadingPlan {
+  id           String            @id @default(cuid())
+  name         String
+  description  String?           @db.Text
+  type         PlanType
+  durationDays Int?
+  isDefault    Boolean           @default(false)
+  isActive     Boolean           @default(true)
+  coverImage   String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  items        ReadingPlanItem[]
+  userPlans    UserReadingPlan[]
+}
+
+enum PlanType {
+  BIBLICAL_ORDER
+  CHRONOLOGICAL
+  BY_STORY
+  BY_THEME
+  CUSTOM
+}
+
+model ReadingPlanItem {
+  id        String        @id @default(cuid())
+  planId    String
+  dayNumber Int
+  order     Int           @default(0)
+  bookId    String?
+  chapterId String?
+  storyName String?
+  themeName String?
+  plan      ReadingPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  book      BibleBook?    @relation(fields: [bookId], references: [id])
+  chapter   BibleChapter? @relation(fields: [chapterId], references: [id])
+}
+
+model UserReadingPlan {
+  id            String      @id @default(cuid())
+  userId        String
+  planId        String
+  startDate     DateTime    @default(now())
+  targetEndDate DateTime?
+  isActive      Boolean     @default(true)
+  isPaused      Boolean     @default(false)
+  currentDay    Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan          ReadingPlan @relation(fields: [planId], references: [id])
+}
+
+// ─── User Progress ────────────────────────────────────────────────────────────
+
+model UserProgress {
+  id          String       @id @default(cuid())
+  userId      String
+  chapterId   String
+  status      ReadStatus   @default(READ)
+  readCount   Int          @default(1)
+  completedAt DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter     BibleChapter @relation(fields: [chapterId], references: [id])
+
+  @@unique([userId, chapterId])
+}
+
+enum ReadStatus {
+  READ
+  REREAD
+  SKIPPED
+}
+
+// ─── Notes & Favorites ────────────────────────────────────────────────────────
+
+model UserNote {
+  id        String        @id @default(cuid())
+  userId    String
+  chapterId String?
+  verseRef  String?
+  title     String?
+  content   String        @db.Text
+  q1        String?       @db.Text
+  q2        String?       @db.Text
+  q3        String?       @db.Text
+  q4        String?       @db.Text
+  q5        String?       @db.Text
+  isPrivate Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter   BibleChapter? @relation(fields: [chapterId], references: [id])
+}
+
+model UserFavoriteVerse {
+  id        String     @id @default(cuid())
+  userId    String
+  verseId   String
+  note      String?
+  createdAt DateTime   @default(now())
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verse     BibleVerse @relation(fields: [verseId], references: [id])
+
+  @@unique([userId, verseId])
+}
+
+// ─── Achievements ─────────────────────────────────────────────────────────────
+
+model Achievement {
+  id               String            @id @default(cuid())
+  name             String
+  description      String
+  icon             String
+  condition        AchievementType
+  threshold        Int               @default(1)
+  isActive         Boolean           @default(true)
+  userAchievements UserAchievement[]
+}
+
+enum AchievementType {
+  STREAK_DAYS
+  CHAPTERS_READ
+  BOOKS_COMPLETED
+  NOTES_CREATED
+  FAVORITES_SAVED
+  PLAN_COMPLETED
+  BIBLE_COMPLETED
+  FIRST_READ
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model NotificationConfig {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  pushEnabled  Boolean  @default(true)
+  emailEnabled Boolean  @default(false)
+  reminderTime String   @default("08:00")
+  reminderDays Json     @default("[1,2,3,4,5,6,0]")
+  motivational Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MotivationalMessage {
+  id        String   @id @default(cuid())
+  text      String
+  category  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ─── Groups ───────────────────────────────────────────────────────────────────
+
+model ReadingGroup {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  code        String        @unique
+  planId      String?
+  ownerId     String
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  members     GroupMember[]
+}
+
+model GroupMember {
+  id       String       @id @default(cuid())
+  groupId  String
+  userId   String
+  role     GroupRole    @default(MEMBER)
+  joinedAt DateTime     @default(now())
+  group    ReadingGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+}
+
+enum GroupRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// ─── Ministry Module ──────────────────────────────────────────────────────────
+
+enum PublisherType {
+  PUBLISHER
+  AUXILIARY_PIONEER
+  INDEFINITE_AUXILIARY_PIONEER
+  REGULAR_PIONEER
+}
+
+enum ActivityType {
+  FIELD_SERVICE
+  INFORMAL_WITNESSING
+  CART_WITNESSING
+  RETURN_VISIT
+  BIBLE_STUDY
+  LDC_CREDIT
+  COURSE_CREDIT
+  OTHER_CREDIT
+  OTHER
+}
+
+enum ReturnVisitStatus {
+  PENDING
+  VISITED
+  RESCHEDULE
+  BECAME_STUDY
+  CLOSED
+}
+
+enum BibleStudyStatus {
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+model MinistryProfile {
+  id                   String       @id @default(cuid())
+  userId               String       @unique
+  congregation         String?
+  publisherType        PublisherType @default(PUBLISHER)
+  reportName           String?
+  defaultReportContact String?
+  defaultReportMessage String?      @db.Text
+  includeObservation   Boolean      @default(false)
+  remindToRegister     Boolean      @default(true)
+  useReturnVisits      Boolean      @default(true)
+  useBibleStudies      Boolean      @default(true)
+  onboardingCompleted  Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MinistryMonthSetting {
+  id                    String       @id @default(cuid())
+  userId                String
+  month                 Int
+  year                  Int
+  serviceYear           String
+  publisherTypeForMonth PublisherType @default(PUBLISHER)
+  monthlyGoalMinutes    Int?
+  isSpecialMonth        Boolean      @default(false)
+  participatedInMinistry Boolean     @default(false)
+  notes                 String?      @db.Text
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month, year])
+}
+
+model MinistryEntry {
+  id           String       @id @default(cuid())
+  userId       String
+  date         DateTime
+  activityType ActivityType
+  minutes      Int
+  isCredit     Boolean      @default(false)
+  creditType   String?
+  notes        String?      @db.Text
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ReturnVisit {
+  id                    String            @id @default(cuid())
+  userId                String
+  name                  String
+  phone                 String?
+  addressReference      String?
+  firstConversationDate DateTime?
+  subjectDiscussed      String?           @db.Text
+  scriptureUsed         String?
+  materialLeft          String?
+  nextVisitDate         DateTime?
+  status                ReturnVisitStatus @default(PENDING)
+  notes                 String?           @db.Text
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model BibleStudy {
+  id               String           @id @default(cuid())
+  userId           String
+  name             String
+  phone            String?
+  addressReference String?
+  usualDayTime     String?
+  publication      String?
+  currentLesson    String?
+  currentParagraph String?
+  doubts           String?          @db.Text
+  nextPoints       String?          @db.Text
+  lastStudyDate    DateTime?
+  nextStudyDate    DateTime?
+  status           BibleStudyStatus @default(ACTIVE)
+  notes            String?          @db.Text
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions         StudySession[]
+}
+
+model StudySession {
+  id               String     @id @default(cuid())
+  userId           String
+  bibleStudyId     String
+  date             DateTime
+  minutes          Int
+  lessonStudied    String?
+  paragraphStudied String?
+  doubts           String?    @db.Text
+  notes            String?    @db.Text
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bibleStudy       BibleStudy @relation(fields: [bibleStudyId], references: [id], onDelete: Cascade)
+}
+
+model MonthlyReport {
+  id                     String       @id @default(cuid())
+  userId                 String
+  month                  Int
+  year                   Int
+  publisherType          PublisherType
+  ministryMinutes        Int          @default(0)
+  creditMinutes          Int          @default(0)
+  bibleStudiesCount      Int          @default(0)
+  participatedInMinistry Boolean      @default(false)
+  generatedText          String       @db.Text
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month, year])
+}

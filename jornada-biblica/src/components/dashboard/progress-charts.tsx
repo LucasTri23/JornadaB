@@ -47,8 +47,8 @@ export function ProgressCharts({ books }: { books: BookStat[] }) {
               width={40}
             />
             <Tooltip
-              formatter={(value: number | string | undefined, _name: string, props) => [
-                `${value}% (${props.payload.completedChapters}/${props.payload.totalChapters} cap.)`,
+              formatter={(_value, _name, props) => [
+                `${props.payload.percent}% (${props.payload.completedChapters}/${props.payload.totalChapters} cap.)`,
                 props.payload.name,
               ]}
               cursor={{ fill: "hsl(var(--accent))" }}

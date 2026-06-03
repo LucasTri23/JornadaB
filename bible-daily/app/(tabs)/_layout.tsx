@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { BookOpen, Home, ListChecks, FileText, TrendingUp } from 'lucide-react-native';
+import { BookOpen, Home, Briefcase, FileText, TrendingUp } from 'lucide-react-native';
 import { colors } from '@/lib/colors';
 
 export default function TabsLayout() {
@@ -33,10 +33,10 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="plans"
+        name="ministry"
         options={{
-          title: 'Planos',
-          tabBarIcon: ({ color, size }) => <ListChecks size={size} color={color} />,
+          title: 'Ministério',
+          tabBarIcon: ({ color, size }) => <Briefcase size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -53,6 +53,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <TrendingUp size={size} color={color} />,
         }}
       />
+      {/* Hidden — accessible via deep link but not shown in tab bar */}
+      <Tabs.Screen name="plans" options={{ href: null }} />
     </Tabs>
   );
 }

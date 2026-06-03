@@ -1,9 +1,16 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  Modal, ScrollView, ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { ChevronRight, X } from 'lucide-react-native';
+import { ChevronRight, X, ListChecks, Clock, CheckCircle } from 'lucide-react-native';
 import { colors } from '@/lib/colors';
+import { useUserProgress } from '@/lib/supabase-hooks';
+import { useAuthStore } from '@/store/auth';
+import { supabase } from '@/lib/supabase';
+import { useQueryClient } from '@tanstack/react-query';
 
 const BOOKS = [
   { id: 1, name: 'Gênesis', chapters: 50, testament: 'AT' },
@@ -74,11 +81,34 @@ const BOOKS = [
   { id: 66, name: 'Apocalipse', chapters: 22, testament: 'NT' },
 ];
 
-export default function ReadScreen() {
-  const [tab, setTab] = useState<'AT' | 'NT'>('AT');
-  const [selectedBook, setSelectedBook] = useState<typeof BOOKS[0] | null>(null);
+const PLANS = [
+  { id: 1, name: 'Bíblia em 1 Ano', desc: 'De Gênesis a Apocalipse em 365 dias', days: 365, totalChapters: 1189, chapPerDay: 3 },
+  { id: 2, name: 'Bíblia em 6 Meses', desc: 'Ritmo intensivo em 180 dias', days: 180, totalChapters: 1189, chapPerDay: 7 },
+  { id: 3, name: 'Os Evangelhos', desc: 'Mateus, Marcos, Lucas e João', days: 89, totalChapters: 89, chapPerDay: 1 },
+  { id: 4, name: 'NT em 90 Dias', desc: 'Todo o Novo Testamento', days: 90, totalChapters: 260, chapPerDay: 3 },
+  { id: 5, name: 'Salmos e Provérbios', desc: 'Sabedoria bíblica em 30 dias', days: 30, totalChapters: 30, chapPerDay: 1 },
+];
 
-  const filtered = BOOKS.filter(b => b.testament === tab);
+type Tab = 'ler' | 'planos';
+
+export default function ReadScreen() {
+  const { user } = useAuthStore();
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<Tab>('ler');
+  const [testament, setTestament] = useState<'AT' | 'NT'>('AT');
+  const [selectedBook, setSelectedBook] = useState<typeof BOOKS[0] | null>(null);
+  const [activatingPlan, setActivatingPlan] = useState<number | null>(null);
+
+  const { data: progressData } = useUserProgress();
+  const readSet = progressData?.set ?? new Set<string>();
+
+  function getBookProgress(bookId: number, totalChapters: number) {
+    let done = 0;
+    for (let c = 1; c <= totalChapters; c++) {
+      if (readSet.has(`${bookId}-${c}`)) done++;
+    }
+    return { done, pct: Math.round((done / totalChapters) * 100) };
+  }
 
   function openBook(book: typeof BOOKS[0]) {
     if (book.chapters === 1) {
@@ -88,40 +118,124 @@ export default function ReadScreen() {
     }
   }
 
+  async function startPlan(planId: number) {
+    if (!user?.id) return;
+    setActivatingPlan(planId);
+    const plan = PLANS.find(p => p.id === planId);
+    if (!plan) return;
+    await supabase.from('user_reading_plans').upsert({
+      user_id: user.id,
+      plan_id: planId,
+      plan_name: plan.name,
+      total_days: plan.days,
+      current_day: 1,
+      is_active: true,
+      start_date: new Date().toISOString().split('T')[0],
+    }, { onConflict: 'user_id,plan_id' });
+    queryClient.invalidateQueries({ queryKey: ['user_reading_plans'] });
+    setActivatingPlan(null);
+  }
+
+  const filtered = BOOKS.filter(b => b.testament === testament);
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Bíblia</Text>
-        <View style={styles.tabs}>
-          {(['AT', 'NT'] as const).map(t => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.tab, tab === t && styles.tabActive]}
-              onPress={() => setTab(t)}
-            >
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                {t === 'AT' ? 'Antigo' : 'Novo'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+      {/* Top tab selector: Ler / Planos */}
+      <View style={styles.topTabs}>
+        {(['ler', 'planos'] as Tab[]).map(t => (
+          <TouchableOpacity
+            key={t}
+            style={[styles.topTab, tab === t && styles.topTabActive]}
+            onPress={() => setTab(t)}
+          >
+            <Text style={[styles.topTabText, tab === t && styles.topTabTextActive]}>
+              {t === 'ler' ? '📖 Ler' : '📋 Planos'}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      <FlatList
-        data={filtered}
-        keyExtractor={item => String(item.id)}
-        contentContainerStyle={styles.list}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={styles.bookItem} onPress={() => openBook(item)}>
-            <View>
-              <Text style={styles.bookName}>{item.name}</Text>
-              <Text style={styles.bookChapters}>{item.chapters} capítulos</Text>
+      {tab === 'ler' ? (
+        <>
+          {/* AT / NT switcher */}
+          <View style={styles.testamentRow}>
+            <Text style={styles.screenTitle}>Bíblia</Text>
+            <View style={styles.testamentTabs}>
+              {(['AT', 'NT'] as const).map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.testamentTab, testament === t && styles.testamentTabActive]}
+                  onPress={() => setTestament(t)}
+                >
+                  <Text style={[styles.testamentText, testament === t && styles.testamentTextActive]}>
+                    {t === 'AT' ? 'Antigo' : 'Novo'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            <ChevronRight size={20} color={colors.textMuted} />
-          </TouchableOpacity>
-        )}
-      />
+          </View>
 
+          <FlatList
+            data={filtered}
+            keyExtractor={item => String(item.id)}
+            contentContainerStyle={styles.list}
+            renderItem={({ item }) => {
+              const { done, pct } = getBookProgress(item.id, item.chapters);
+              const isDone = pct === 100;
+              return (
+                <TouchableOpacity style={styles.bookItem} onPress={() => openBook(item)}>
+                  <View style={styles.bookInfo}>
+                    <View style={styles.bookNameRow}>
+                      <Text style={styles.bookName}>{item.name}</Text>
+                      {isDone && <CheckCircle size={14} color={colors.success} />}
+                    </View>
+                    <Text style={styles.bookChapters}>{item.chapters} cap. · {done > 0 ? `${done} lidos` : 'não iniciado'}</Text>
+                    {done > 0 && (
+                      <View style={styles.bookProgress}>
+                        <View style={[styles.bookProgressFill, { width: `${pct}%` }]} />
+                      </View>
+                    )}
+                  </View>
+                  <ChevronRight size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </>
+      ) : (
+        /* Plans */
+        <ScrollView contentContainerStyle={styles.plansContent}>
+          <Text style={styles.plansTitle}>Planos de Leitura</Text>
+          <Text style={styles.plansSubtitle}>Escolha um plano e leia de forma estruturada</Text>
+          {PLANS.map(plan => (
+            <View key={plan.id} style={styles.planCard}>
+              <View style={styles.planIcon}>
+                <ListChecks size={22} color={colors.primary} />
+              </View>
+              <View style={styles.planContent}>
+                <Text style={styles.planName}>{plan.name}</Text>
+                <Text style={styles.planDesc}>{plan.desc}</Text>
+                <View style={styles.planMeta}>
+                  <Clock size={12} color={colors.textMuted} />
+                  <Text style={styles.planMetaText}>{plan.days} dias · ~{plan.chapPerDay} cap/dia</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.startBtn, activatingPlan === plan.id && styles.startBtnDisabled]}
+                onPress={() => startPlan(plan.id)}
+                disabled={activatingPlan === plan.id}
+              >
+                {activatingPlan === plan.id
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={styles.startBtnText}>Iniciar</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {/* Chapter selector modal */}
       <Modal visible={!!selectedBook} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -132,18 +246,21 @@ export default function ReadScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={styles.chaptersGrid}>
-              {Array.from({ length: selectedBook?.chapters ?? 0 }, (_, i) => i + 1).map(ch => (
-                <TouchableOpacity
-                  key={ch}
-                  style={styles.chapterBtn}
-                  onPress={() => {
-                    setSelectedBook(null);
-                    router.push(`/read/${selectedBook!.id}/${ch}`);
-                  }}
-                >
-                  <Text style={styles.chapterBtnText}>{ch}</Text>
-                </TouchableOpacity>
-              ))}
+              {Array.from({ length: selectedBook?.chapters ?? 0 }, (_, i) => i + 1).map(ch => {
+                const isRead = selectedBook ? readSet.has(`${selectedBook.id}-${ch}`) : false;
+                return (
+                  <TouchableOpacity
+                    key={ch}
+                    style={[styles.chapterBtn, isRead && styles.chapterBtnRead]}
+                    onPress={() => {
+                      setSelectedBook(null);
+                      router.push(`/read/${selectedBook!.id}/${ch}`);
+                    }}
+                  >
+                    <Text style={[styles.chapterBtnText, isRead && styles.chapterBtnTextRead]}>{ch}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           </View>
         </View>
@@ -154,33 +271,120 @@ export default function ReadScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: { padding: 20, gap: 16 },
-  title: { fontSize: 28, fontWeight: 'bold', color: colors.text },
-  tabs: { flexDirection: 'row', gap: 8, backgroundColor: colors.surface, borderRadius: 12, padding: 4 },
-  tab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  tabActive: { backgroundColor: colors.primary },
-  tabText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
-  tabTextActive: { color: '#fff' },
-  list: { paddingHorizontal: 20, paddingBottom: 20, gap: 8 },
-  bookItem: {
-    backgroundColor: colors.surface, borderRadius: 12, padding: 16,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    borderWidth: 1, borderColor: colors.border,
+
+  // Top tabs (Ler / Planos)
+  topTabs: {
+    flexDirection: 'row',
+    margin: 16,
+    marginBottom: 4,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  bookName: { fontSize: 16, fontWeight: '500', color: colors.text },
-  bookChapters: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  modalOverlay: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
+  topTab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  topTabActive: { backgroundColor: colors.primary },
+  topTabText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
+  topTabTextActive: { color: '#fff', fontWeight: '600' },
+
+  // Read view
+  testamentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  screenTitle: { fontSize: 22, fontWeight: 'bold', color: colors.text },
+  testamentTabs: {
+    flexDirection: 'row',
+    gap: 4,
+    backgroundColor: colors.surfaceLight,
+    borderRadius: 10,
+    padding: 3,
+  },
+  testamentTab: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 7 },
+  testamentTabActive: { backgroundColor: colors.primary },
+  testamentText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
+  testamentTextActive: { color: '#fff' },
+
+  list: { paddingHorizontal: 16, paddingBottom: 20, gap: 8 },
+  bookItem: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  bookInfo: { flex: 1 },
+  bookNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  bookName: { fontSize: 15, fontWeight: '500', color: colors.text },
+  bookChapters: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  bookProgress: {
+    height: 3,
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  bookProgressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 2 },
+
+  // Plans view
+  plansContent: { padding: 16, gap: 12 },
+  plansTitle: { fontSize: 22, fontWeight: 'bold', color: colors.text },
+  plansSubtitle: { fontSize: 13, color: colors.textMuted },
+  planCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  planIcon: {
+    width: 44, height: 44,
+    backgroundColor: colors.primary + '20',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  planContent: { flex: 1, gap: 2 },
+  planName: { fontSize: 15, fontWeight: '600', color: colors.text },
+  planDesc: { fontSize: 12, color: colors.textMuted },
+  planMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  planMetaText: { fontSize: 11, color: colors.textMuted },
+  startBtn: { backgroundColor: colors.primary, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, minWidth: 60, alignItems: 'center' },
+  startBtnDisabled: { opacity: 0.6 },
+  startBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+
+  // Chapter modal
+  modalOverlay: { flex: 1, backgroundColor: '#000000bb', justifyContent: 'flex-end' },
   modalContent: {
-    backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 24, maxHeight: '70%',
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '70%',
   },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: colors.text },
-  chaptersGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chaptersGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingBottom: 20 },
   chapterBtn: {
-    width: 52, height: 52, backgroundColor: colors.surfaceLight,
-    borderRadius: 12, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1, borderColor: colors.border,
+    width: 50, height: 50,
+    backgroundColor: colors.surfaceLight,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  chapterBtnText: { fontSize: 16, color: colors.text, fontWeight: '500' },
+  chapterBtnRead: { backgroundColor: colors.primary + '30', borderColor: colors.primary },
+  chapterBtnText: { fontSize: 15, color: colors.text, fontWeight: '500' },
+  chapterBtnTextRead: { color: colors.primary, fontWeight: '700' },
 });

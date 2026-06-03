@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    // Enable for better performance
+  turbopack: {
+    root: __dirname,
   },
   images: {
     remotePatterns: [
